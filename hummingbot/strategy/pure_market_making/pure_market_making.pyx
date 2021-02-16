@@ -649,6 +649,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
                                            (self._logging_options & self.OPTION_LOG_STATUS_REPORT))
             cdef object proposal
         try:
+            self.logger().info(f"tick(): Called")
             if not self._all_markets_ready:
                 self._all_markets_ready = all([market.ready for market in self._sb_markets])
                 if self._asset_price_delegate is not None and self._all_markets_ready:
@@ -670,14 +671,23 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             if self._create_timestamp <= self._current_timestamp:
                 # 1. Create base order proposals
                 proposal = self.c_create_base_proposal()
+                self.logger().info(f"tick(): Proposals created: {proposal}")
+
                 # 2. Apply functions that limit numbers of buys and sells proposal
                 self.c_apply_order_levels_modifiers(proposal)
+                self.logger().info(f"tick(): Proposals order level modifiers applied: {proposal}")
+
                 # 3. Apply functions that modify orders price
                 self.c_apply_order_price_modifiers(proposal)
+                self.logger().info(f"tick(): Proposals price modifiers applied: {proposal}")
+
                 # 4. Apply functions that modify orders size
                 self.c_apply_order_size_modifiers(proposal)
+                self.logger().info(f"tick(): Proposals order size modifiers applied: {proposal}")
+
                 # 5. Apply budget constraint, i.e. can't buy/sell more than what you have.
                 self.c_apply_budget_constraint(proposal)
+                self.logger().info(f"tick(): Proposals budget constraints applied: {proposal}")
 
                 if not self._take_if_crossed:
                     self.c_filter_out_takers(proposal)
@@ -1202,6 +1212,9 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         return Proposal(buys, sells)
 
     cdef bint c_to_create_orders(self, object proposal):
+        self.logger().info(f"c_to_create_orders(): Called, create timestamp:{self._create_timestamp}, "
+                           f"current timestamp: {self._current_timestamp}, "
+                           f"active_non_hanging_orders: {self.active_non_hanging_orders}")
         return self._create_timestamp < self._current_timestamp and \
             proposal is not None and \
             len(self.active_non_hanging_orders) == 0
