@@ -665,6 +665,27 @@ class PMMUnitTest(unittest.TestCase):
 
         self.order_fill_logger.clear()
 
+    def test_hanging_orders_multiple_orders_single_hang(self):
+        strategy = self.multi_levels_strategy
+        strategy.order_refresh_time = 4.0
+        strategy.filled_order_delay = 8.0
+        strategy.hanging_orders_enabled = True
+        strategy.hanging_orders_cancel_pct = Decimal("0.05")
+        self.clock.add_iterator(strategy)
+        self.clock.backtest_til(self.start_timestamp + 1)
+        self.assertEqual(3, len(strategy.active_buys))
+        self.assertEqual(3, len(strategy.active_sells))
+
+        self.simulate_maker_market_trade(False, 100, 98.9)
+
+        # Bid is filled and due to delay is not replenished immediately
+        # Ask order is now hanging but is active
+        self.clock.backtest_til(self.start_timestamp + 2)
+        self.assertEqual(1, len(self.order_fill_logger.event_log))
+        self.assertEqual(2, len(strategy.active_buys))
+        self.assertEqual(3, len(strategy.active_sells))
+        self.assertEqual(1, len(strategy.hanging_order_ids))
+
     def test_inventory_skew(self):
         strategy = self.one_level_strategy
         strategy.inventory_skew_enabled = True

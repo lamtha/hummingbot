@@ -989,6 +989,7 @@ cdef class PureMarketMakingStrategy(StrategyBase):
             limit_order_record = self._sb_order_tracker.c_get_limit_order(self._market_info, order_id)
         if limit_order_record is None:
             return
+
         active_sell_ids = [x.client_order_id for x in self.active_orders if not x.is_buy]
 
         if self._hanging_orders_enabled:
@@ -1011,8 +1012,17 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._cancel_timestamp = min(self._cancel_timestamp, self._create_timestamp)
 
         if self._hanging_orders_enabled:
-            for other_order_id in active_sell_ids:
-                self._hanging_order_ids.append(other_order_id)
+            if True:
+                orders=[x for x in self.active_orders if not x.is_buy]
+                if len(orders) > 0:
+                    sorted_orders=sorted(orders, key=lambda order: order.price)
+                    self.log_with_clock(
+                        logging.INFO,
+                        f"Marking single hanging sell order from: {orders}")
+                    self._hanging_order_ids.append(sorted_orders[0].client_order_id)
+            else:
+                for other_order_id in active_sell_ids:
+                    self._hanging_order_ids.append(other_order_id)
 
         self._filled_buys_balance += 1
         self._last_own_trade_price = limit_order_record.price
@@ -1055,8 +1065,17 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         self._cancel_timestamp = min(self._cancel_timestamp, self._create_timestamp)
 
         if self._hanging_orders_enabled:
-            for other_order_id in active_buy_ids:
-                self._hanging_order_ids.append(other_order_id)
+            if True:
+                orders=[x for x in self.active_orders if x.is_buy]
+                if len(orders) > 0:
+                    sorted_orders=sorted(orders, key=lambda order: order.price, reverse=True)
+                    self.log_with_clock(
+                        logging.INFO,
+                        f"Marking single hanging buy order from: {orders}")
+                    self._hanging_order_ids.append(sorted_orders[0].client_order_id)
+            else:
+                for other_order_id in active_buy_ids:
+                    self._hanging_order_ids.append(other_order_id)
 
         self._filled_sells_balance += 1
         self._last_own_trade_price = limit_order_record.price
