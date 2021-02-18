@@ -26,11 +26,7 @@ from hummingbot.core.utils.async_utils import (
 from hummingbot.connector.exchange.kraken.kraken_api_order_book_data_source import KrakenAPIOrderBookDataSource
 from hummingbot.connector.exchange.kraken.kraken_auth import KrakenAuth
 import hummingbot.connector.exchange.kraken.kraken_constants as constants
-from hummingbot.connector.exchange.kraken.kraken_utils import (
-    convert_from_exchange_symbol,
-    convert_from_exchange_trading_pair,
-    convert_to_exchange_trading_pair,
-    split_to_base_quote)
+from hummingbot.connector.exchange.kraken.kraken_utils import convert_from_exchange_symbol
 from hummingbot.logger import HummingbotLogger
 from hummingbot.core.event.events import (
     MarketEvent,
@@ -52,6 +48,7 @@ from hummingbot.core.data_type.order_book cimport OrderBook
 from hummingbot.connector.exchange.kraken.kraken_order_book_tracker import KrakenOrderBookTracker
 from hummingbot.connector.exchange.kraken.kraken_user_stream_tracker import KrakenUserStreamTracker
 from hummingbot.connector.exchange.kraken.kraken_in_flight_order import KrakenInFlightOrder
+from hummingbot.connector.exchange.kraken.kraken_trading_rule import KrakenTradingRule
 from hummingbot.core.data_type.cancellation_result import CancellationResult
 from hummingbot.core.data_type.transaction_tracker import TransactionTracker
 from hummingbot.connector.trading_rule cimport TradingRule
@@ -198,6 +195,7 @@ cdef class KrakenExchange(ExchangeBase):
             asset_pairs_response = await client.get(ASSET_PAIRS_URI)
             asset_pairs_data: Dict[str, Any] = await asset_pairs_response.json()
             asset_pairs: Dict[str, Any] = asset_pairs_data["result"]
+            self.logger().debug(f"asset_pairs: Loading {asset_pairs.keys()}")
             self._asset_pairs = {pair: details for pair, details in asset_pairs.items() if "." not in pair}
         return self._asset_pairs
 
@@ -225,13 +223,12 @@ cdef class KrakenExchange(ExchangeBase):
             if order.get("status") == "open":
                 details = order.get("descr")
                 if details.get("ordertype") == "limit":
-                    pair = convert_from_exchange_trading_pair(details.get("pair"))
-                    (base, quote) = self.split_trading_pair(pair)
+                    trading_rule = self._trading_rules[details.get("pair")]
                     vol_locked = Decimal(order.get("vol", 0)) - Decimal(order.get("vol_exec", 0))
                     if details.get("type") == "sell":
-                        locked[base] += vol_locked
+                        locked[trading_rule.hb_base()] += vol_locked
                     elif details.get("type") == "buy":
-                        locked[quote] += vol_locked * Decimal(details.get("price"))
+                        locked[trading_rule.hb_quote()] += vol_locked * Decimal(details.get("price"))
 
         for asset_name, balance in balances.items():
             cleaned_name = convert_from_exchange_symbol(asset_name).upper()
@@ -284,7 +281,7 @@ cdef class KrakenExchange(ExchangeBase):
             trading_rules_list = self._format_trading_rules(asset_pairs)
             self._trading_rules.clear()
             for trading_rule in trading_rules_list:
-                self._trading_rules[convert_from_exchange_trading_pair(trading_rule.trading_pair)] = trading_rule
+                self._trading_rules[trading_rule.hb_trading_pair()] = trading_rule
 
     def _format_trading_rules(self, asset_pairs_dict: Dict[str, Any]) -> List[TradingRule]:
         """
@@ -315,17 +312,20 @@ cdef class KrakenExchange(ExchangeBase):
             list retval = []
         for trading_pair, rule in asset_pairs_dict.items():
             try:
-                base, quote = split_to_base_quote(trading_pair)
-                base = convert_from_exchange_symbol(base)
-                min_order_size = Decimal(constants.BASE_ORDER_MIN.get(base, 0))
+                base = rule['base']
+                quote = rule['quote']
+                hb_base = convert_from_exchange_symbol(base)
+                min_order_size = Decimal(constants.BASE_ORDER_MIN.get(hb_base, 0))
                 min_price_increment = Decimal(f"1e-{rule.get('pair_decimals')}")
                 min_base_amount_increment = Decimal(f"1e-{rule.get('lot_decimals')}")
                 retval.append(
-                    TradingRule(
+                    KrakenTradingRule(
                         trading_pair,
                         min_order_size=min_order_size,
                         min_price_increment=min_price_increment,
                         min_base_amount_increment=min_base_amount_increment,
+                        base=base,
+                        quote=quote
                     )
                 )
             except Exception:
@@ -792,9 +792,10 @@ cdef class KrakenExchange(ExchangeBase):
                           is_buy: bool,
                           price: Optional[Decimal] = s_decimal_NaN):
 
-        trading_pair = convert_to_exchange_trading_pair(trading_pair)
+        kraken_trading_rule = self._trading_rules[trading_pair]
+
         data = {
-            "pair": trading_pair,
+            "pair": kraken_trading_rule.kraken_trading_pair(),
             "type": "buy" if is_buy else "sell",
             "ordertype": "limit",
             "volume": str(amount),
@@ -817,6 +818,7 @@ cdef class KrakenExchange(ExchangeBase):
                           userref: int = 0):
         cdef:
             TradingRule trading_rule = self._trading_rules[trading_pair]
+            # TODO fix
             str base_currency = self.split_trading_pair(trading_pair)[0]
             str quote_currency = self.split_trading_pair(trading_pair)[1]
             object buy_fee = self.c_get_fee(base_currency, quote_currency, order_type, TradeType.BUY, amount, price)
