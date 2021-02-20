@@ -1211,9 +1211,6 @@ cdef class PureMarketMakingStrategy(StrategyBase):
         return Proposal(buys, sells)
 
     cdef bint c_to_create_orders(self, object proposal):
-        self.logger().info(f"c_to_create_orders(): Called, create timestamp:{self._create_timestamp}, "
-                           f"current timestamp: {self._current_timestamp}, "
-                           f"active_non_hanging_orders: {self.active_non_hanging_orders}")
         return self._create_timestamp < self._current_timestamp and \
             proposal is not None and \
             len(self.active_non_hanging_orders) == 0
